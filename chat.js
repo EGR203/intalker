@@ -14,7 +14,7 @@ const strDiviner = '  : ';
 
 
 
-const brdcIntervalTime =700;
+const brdcIntervalTime =1000;
 const broadcastKey = '128500--+';
 const broadcastMask = '';
 const broadcastPort = 9970;
@@ -66,52 +66,84 @@ function getRandomInt(min, max)
 /// Основные функции
 /////////////////////////////////////////////////////////////////
 
-//переделать сканирование броадкаста на запрос в броадкасте
-function scanBroadcast(){
-	var brdSock = dgram.createSocket('udp4');
-	var createServerTimer;
-	
-	readLinePurge();
+//Функция для сервера
+//Слушает броадкаст и ждет кодовую комбинацию, чтобы послать клиенту
+//свой айпи
+function createDoorman(){
+    //Сканер броадкаста (ждем клиентов)
+	var doorman = dgram.createSocket('udp4');
 
-	//Перезапуск сканирования из за занятого порта
-	brdSock.on('error', (err) => {
-		console.log('Порт broadcast`а занят, повторная попытка через ' + brdcIntervalTime*3/1000 + ' секунд(ы) ');
-		brdSock.close();
-		clearTimeout(createServerTimer);
-		setTimeout(scanBroadcast,brdcIntervalTime * 3);
-	});
-
-	//Подключение клиента к откликнувшему серверу
-	brdSock.on('message', (msg, rinfo) => {
+	doorman.on('message', (msg, rinfo) => {
 		if(msg == broadcastKey){
-			console.log('Найден сервер:' + rinfo.address);
-			brdSock.close();
-			clearTimeout(createServerTimer);
-			createClient(defaultPort, rinfo.address);	
+			doorman.send(broadcastKey, rinfo.port , rinfo.address);
 		}
 	});
-
-	//если порт свободный, сканируем бродкаст
-	brdSock.on('listening', () => {
-		var address = brdSock.address();
-		brdSock.setBroadcast(true);
-		console.log(`Слушаю broadcast на ${address.address}:${address.port}`);
-		
-		//таймер на создание сервера
-		createServerTimer = setTimeout(function(){
-			console.log('Сервера не найдены, создаю сервер');
-			brdSock.close();
-			createServer();
-		}, brdcIntervalTime * 3);
+	doorman.on('error',(err) => {
+		console.log('Brodcast doorman error:\n '+err);
+		doorman.close();
 	});
+	doorman.on('listening',function(){
+		console.log('Запускаю broadcast doorman');
+		doorman.setBroadcast(true);
+	});
+	doorman.bind( broadcastPort, broadcastMask);
+	return doorman;
+}
 
-	brdSock.bind( broadcastPort, broadcastMask);
+//переделать сканирование броадкаста на запрос в броадкасте
+function findServer(){
+	readLinePurge();
+
+	var client = dgram.createSocket('udp4');
+	var sendTimerId;
+
+	client.on('message', (msg, rinfo) => {
+		if(msg == broadcastKey){
+			console.log('Найден сервер:' + rinfo.address);
+			client.close();
+			clearTimeout(sendTimerId);
+			createClient(defaultPort, rinfo.address);
+		}
+	});
+	client.on('error',(err) => {
+		console.log('Порт broadcast`а занят, повторная попытка через ' + brdcIntervalTime*3/1000 + ' секунд(ы) ');
+	 	client.close();
+	 	clearTimeout(sendTimerId);
+		setTimeout(findServer,brdcIntervalTime * getRandomInt(1,7) + getRandomInt(0, 400));
+	});
+	client.on('listening',function(){
+		console.log('Ищем сервера');
+		client.setBroadcast(true);
+
+		var index = 0;
+		var requestNum = getRandomInt(3,7);
+
+		client.send(broadcastKey, broadcastPort, broadcastMask);	
+		sendTimerId = setInterval(function(){
+			client.send(broadcastKey, broadcastPort, broadcastMask);
+			index ++;
+			//если сервер не появляется после 3-7 запросов
+			//создать сервер
+			if(index >= requestNum){
+				client.close();
+				clearTimeout(sendTimerId);
+				console.log('Сервера не найдены, создаю сервер');
+				createServer();
+			}
+		}, brdcIntervalTime + getRandomInt(0,100));
+	});
+	//байндимся на любой свободный порт
+	client.bind( '', broadcastMask);
+
 }
 
 /////////////////////////////////////////////////////////////////
 /// Сервер
 /////////////////////////////////////////////////////////////////
+
 function createServer(){
+	var doorman = createDoorman();
+										//действия при подключении клиента
 	var netServer = net.createServer(function (client){
 		//server.ip  и client.ip  нужны только для отображения этого IP в сообщениях
 		//попытка изменять отображение айпи по умолчанию при каждом подключении клиента
@@ -132,20 +164,28 @@ function createServer(){
 				netServer.sendAll(data , client);
 			}
 		});
-
 		client.on('end', function(){
 			clients.remove(client);
 			netServer.sendAll("[-] Клиент " + client.ip + ":" + client.remotePort + " " + client.nickname + " отключен", 'SERVER');
 		});
 		clients.push(client);		
 	}); 
+
+
 	netServer.on('listening',function(){
 		netServer.nickname = nickname;
 		netServer.ip = '127.0.0.1'; //дефолтный айпишник
-		console.log('Сервер создан');
+		console.log('Сервер создан\\n\n');
 	});
+	//возникает, если одновременно создать сервер на 1ом компьютере
 	netServer.on('error',function(err){
-		console.log(err);
+		console.log('Произошла ошибка при создании сервера TCP,');
+		console.log('Предпринята попытка пересканировать сеть');
+		if( doorman ){
+			doorman.close();
+		}
+		netServer.close();
+		findServer();
 	});
 
 	netServer.listen( defaultPort );
@@ -163,33 +203,12 @@ function createServer(){
 		}
 	}
 
-	//Сервер запускает broadcast "маяк"
-	netServer.beaconTimerId = (function(){
-
-		beacon = dgram.createSocket('udp4');
-		beacon.on('error',(err) => {
-			console.log('Brodcast error:\n '+err);
-		});
-		beacon.on('listening',function(){
-			console.log('Запускаю broadcast');
-			beacon.setBroadcast(true);
-		});
-
-		function sendBroadcastKey(){
-			beacon.send(broadcastKey, broadcastPort, broadcastMask);
-		}
-
-		sendBroadcastKey();
-
-		return setInterval(function(){sendBroadcastKey();}, brdcIntervalTime);
-		
-	})();	
 
 	rl.on('line',function(input){
 		netServer.sendAll(input, netServer);
 	});
 
-	return netServer;//net.server	
+	return netServer;	
 }
 /////////////////////////////////////////////////////////////////
 /// Клиент
@@ -203,7 +222,7 @@ function createClient(port, ip){
 	});
 	connect.on('close',function(){
 		console.log('соединение сброшено\nПопытка повторного соеденения\n\n');
-		setTimeout(scanBroadcast, getRandomInt(0,500) );
+		setTimeout(findServer, getRandomInt(0,500) );
 	});
 	connect.on('data', beautyConsole);
 	rl.on('line', (input) => {
@@ -217,4 +236,4 @@ function createClient(port, ip){
 /// Сценарий приложения
 /////////////////////////////////////////////////////////////////
 console.log('Ваш никнейм: '+nickname);
-scanBroadcast();
+findServer();
