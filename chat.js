@@ -1,12 +1,37 @@
 const net = require('net');
 const dgram = require('dgram');
 const readline = require('readline');
+
 var rl = readline.createInterface({
 	input: process.stdin,
 	output: process.stdout
 	});
 
+
+const commandKey =':c!:';
+const commandPattarn = new RegExp('^'+commandKey);
+const strDiviner = '  : ';
+
+
+
+const brdcIntervalTime =700;
+const broadcastKey = '128500--+';
+const broadcastMask = '';
+const broadcastPort = 9970;
+
+const defaultPort = 9973;
+
+
+var clients = [];
+var	nickname =  process.argv[2] ? process.argv[2] : ( getRandomInt(0,500) + '-anonim' );
+
+
+/////////////////////////////////////////////////////////////////
+/// Вспомогательные функции
+/////////////////////////////////////////////////////////////////
+
 function readLinePurge(){
+	clients = [];
 	rl.close();
 	rl = readline.createInterface({
 		input: process.stdin,
@@ -14,22 +39,6 @@ function readLinePurge(){
 	});	
 }
 
-const broadcastKey = '128500--+';
-const commandKey =':c!:';
-const commandPattarn = new RegExp('^'+commandKey);
-const strDiviner = '  : ';
-const divinerPattern = new RegExp(strDiviner);
-const broadcastMask = '';
-const broadcastPort = 9970;
-const defaultPort = 9973;
-const brdcIntervalTime =700;
-var clients = [];
-var	nickname =  process.argv[2] ? process.argv[2] : ( getRandomInt(0,500) + '-anonim' );
-
-
-/////////////////////////////////////////////////////////////////
-///Вспомогательные функции
-/////////////////////////////////////////////////////////////////
 function beautyConsole(msg){
 	console.log("-         -         -          -          "+ getCustomeDate()+ " " + msg);
 }
@@ -51,8 +60,11 @@ function getRandomInt(min, max)
 {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
-/////////////////////////////////////////////////////////////////
 
+
+/////////////////////////////////////////////////////////////////
+/// Основные функции
+/////////////////////////////////////////////////////////////////
 
 //переделать сканирование броадкаста на запрос в броадкасте
 function scanBroadcast(){
@@ -96,7 +108,9 @@ function scanBroadcast(){
 	brdSock.bind( broadcastPort, broadcastMask);
 }
 
-
+/////////////////////////////////////////////////////////////////
+/// Сервер
+/////////////////////////////////////////////////////////////////
 function createServer(){
 	var netServer = net.createServer(function (client){
 		//server.ip  и client.ip  нужны только для отображения этого IP в сообщениях
@@ -177,7 +191,9 @@ function createServer(){
 
 	return netServer;//net.server	
 }
-
+/////////////////////////////////////////////////////////////////
+/// Клиент
+/////////////////////////////////////////////////////////////////
 
 function createClient(port, ip){
 	var connect = net.createConnection(port,ip, function(){
@@ -197,8 +213,8 @@ function createClient(port, ip){
 	return connect;
 }
 
-
+/////////////////////////////////////////////////////////////////
+/// Сценарий приложения
+/////////////////////////////////////////////////////////////////
 console.log('Ваш никнейм: '+nickname);
 scanBroadcast();
-
-
