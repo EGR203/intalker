@@ -7,31 +7,39 @@ var rl = readline.createInterface({
 	output: process.stdout
 	});
 
-
+//ключевые команды для отделения данных в tcp сообщениях
 const commandKey =':c!:';
 const commandPattarn = new RegExp('^'+commandKey);
 const strDiviner = '  : ';
 
+//добавить сканирование у сервера на наличие серверов в сетке
+//если есть, то попросить переключиться
+//и выкинуть случайное число
 
 
-const brdcIntervalTime =1000;
-const broadcastKey = '128500--+';
-const broadcastMask = '';
-const broadcastPort = 9970;
+//Настройки broadcast`а
+const brdIntervalTime =200;
+const brdKey = '128500a2b2c2';
+const brdMask = '';
+const brdPort = 9970;
+//прокоментировать нижестоящую переменную
+const brdCompetitionKey = brdKey + 'iAmServer'; 
+const brdCompetitionPattern = new RegExp('([1-9])::' + brdCompetitionKey + '(.+)');
+const defaultServerPort = 9973;
 
-const defaultPort = 9973;
 
-
-var clients = [];
 var	nickname =  process.argv[2] ? process.argv[2] : ( getRandomInt(0,500) + '-anonim' );
+var application = null;
 
 
 /////////////////////////////////////////////////////////////////
 /// Вспомогательные функции
 /////////////////////////////////////////////////////////////////
 
-function readLinePurge(){
-	clients = [];
+function purgeData(){
+	if(application && application['destroyed'] !== false){
+		application.destroy();
+	}
 	rl.close();
 	rl = readline.createInterface({
 		input: process.stdin,
@@ -66,74 +74,105 @@ function getRandomInt(min, max)
 /// Основные функции
 /////////////////////////////////////////////////////////////////
 
-//Функция для сервера
-//Слушает броадкаст и ждет кодовую комбинацию, чтобы послать клиенту
-//свой айпи
+//Функция вызывается сервером
+//Слушает броадкаст, ожидая запросы клиентов
 function createDoorman(){
-    //Сканер броадкаста (ждем клиентов)
 	var doorman = dgram.createSocket('udp4');
+	var competitionTimerId;
+	
+	function sendCompetitionRequest(numb){
+		if(numb === undefined){
+			numb = getRandomInt(1,8);
+		}
+		doorman.send(numb + '::' + brdCompetitionKey +nickname , brdPort, brdMask);
+	}
 
 	doorman.on('message', (msg, rinfo) => {
-		if(msg == broadcastKey){
-			doorman.send(broadcastKey, rinfo.port , rinfo.address);
+		if(msg == brdKey){
+			doorman.send(brdKey, rinfo.port , rinfo.address);
+		}
+
+		msg = msg.toString('utf8');
+
+		var competitionTest;
+		if(competitionTest = brdCompetitionPattern.exec(msg)){
+			var concurentPriority = competitionTest[1];
+			var concurentName = competitionTest[2];
+			if(concurentName == nickname) {
+				return;
+			}
+
+			if( concurentPriority > getRandomInt(1,8)){
+				console.log('В сети найден еще 1 сервер');
+				console.log('Cканирую сеть');
+				findServer();
+			}else{
+				sendCompetitionRequest(9);
+			}
 		}
 	});
 	doorman.on('error',(err) => {
 		console.log('Brodcast doorman error:\n '+err);
 		doorman.close();
 	});
+	doorman.on('close',()=>{
+		clearTimeout(competitionTimerId);
+	});
 	doorman.on('listening',function(){
 		console.log('Запускаю broadcast doorman');
 		doorman.setBroadcast(true);
+
+		competitionTimerId = setInterval(sendCompetitionRequest,brdIntervalTime*100);
 	});
-	doorman.bind( broadcastPort, broadcastMask);
+	doorman.bind( brdPort, brdMask);
 	return doorman;
 }
-
-//переделать сканирование броадкаста на запрос в броадкасте
+//пытается найти сервер  и подключиться к нему
+//если не находит - создает свой
 function findServer(){
-	readLinePurge();
+	purgeData();
 
-	var client = dgram.createSocket('udp4');
+	var finder = dgram.createSocket('udp4');
 	var sendTimerId;
 
-	client.on('message', (msg, rinfo) => {
-		if(msg == broadcastKey){
+	finder.on('message', (msg, rinfo) => {
+		if(msg == brdKey){
 			console.log('Найден сервер:' + rinfo.address);
-			client.close();
+			finder.close();			
 			clearTimeout(sendTimerId);
-			createClient(defaultPort, rinfo.address);
+			application = createClient(defaultServerPort, rinfo.address);
 		}
 	});
-	client.on('error',(err) => {
-		console.log('Порт broadcast`а занят, повторная попытка через ' + brdcIntervalTime*3/1000 + ' секунд(ы) ');
-	 	client.close();
+	finder.on('error',(err) => {
+		console.log('Порт broadcast`а занят, повторная попытка через ' + brdIntervalTime*3/1000 + ' секунд(ы) ');
+	 	finder.close();
 	 	clearTimeout(sendTimerId);
-		setTimeout(findServer,brdcIntervalTime * getRandomInt(1,7) + getRandomInt(0, 400));
+		setTimeout(findServer,brdIntervalTime * getRandomInt(1,7) + getRandomInt(0, 400));
 	});
-	client.on('listening',function(){
+	finder.on('listening',function(){
 		console.log('Ищем сервера');
-		client.setBroadcast(true);
+		finder.setBroadcast(true);
 
 		var index = 0;
 		var requestNum = getRandomInt(3,7);
 
-		client.send(broadcastKey, broadcastPort, broadcastMask);	
+		finder.send(brdKey, brdPort, brdMask);	
 		sendTimerId = setInterval(function(){
-			client.send(broadcastKey, broadcastPort, broadcastMask);
-			index ++;
 			//если сервер не появляется после 3-7 запросов
 			//создать сервер
 			if(index >= requestNum){
-				client.close();
+				finder.close();
 				clearTimeout(sendTimerId);
 				console.log('Сервера не найдены, создаю сервер');
-				createServer();
+				application = createServer();
+				return;
 			}
-		}, brdcIntervalTime + getRandomInt(0,100));
+			finder.send(brdKey, brdPort, brdMask);
+			index ++;
+		}, brdIntervalTime + getRandomInt(0,100));
 	});
 	//байндимся на любой свободный порт
-	client.bind( '', broadcastMask);
+	finder.bind( '', brdMask);
 
 }
 
@@ -143,6 +182,7 @@ function findServer(){
 
 function createServer(){
 	var doorman = createDoorman();
+
 										//действия при подключении клиента
 	var netServer = net.createServer(function (client){
 		//server.ip  и client.ip  нужны только для отображения этого IP в сообщениях
@@ -165,37 +205,47 @@ function createServer(){
 			}
 		});
 		client.on('end', function(){
-			clients.remove(client);
+			netServer.clients.remove(client);
 			netServer.sendAll("[-] Клиент " + client.ip + ":" + client.remotePort + " " + client.nickname + " отключен", 'SERVER');
 		});
-		clients.push(client);		
+		netServer.clients.push(client);		
 	}); 
 
+
+	netServer.destroy = function(){
+		for(var i in this.clients){
+			if(typeof(this.clients[i]) != 'function'){
+				this.clients[i].destroy();
+			}
+		}
+		if(doorman['_receiving']){
+			doorman.close();
+		}
+		this.close();
+	}
 
 	netServer.on('listening',function(){
 		netServer.nickname = nickname;
 		netServer.ip = '127.0.0.1'; //дефолтный айпишник
+		netServer.clients = [];
 		console.log('Сервер создан\\n\n');
 	});
 	//возникает, если одновременно создать сервер на 1ом компьютере
 	netServer.on('error',function(err){
 		console.log('Произошла ошибка при создании сервера TCP,');
 		console.log('Предпринята попытка пересканировать сеть');
-		if( doorman ){
-			doorman.close();
-		}
-		netServer.close();
+		netServer.destroy();	
 		findServer();
 	});
 
-	netServer.listen( defaultPort );
+	netServer.listen( defaultServerPort );
 	//Рассылка сообщения всем, кроме владельца (в том числе и клиенту на сервере)
 	netServer.sendAll = function(msg, owner){
 		var data = owner === 'SERVER' ? 'SERVER' : (owner.nickname + " (" + owner['ip']+")" );
 		data+= strDiviner + msg;
-		for(let i = 0; i< clients.length ; i++){
-			if(clients[i] !== owner) {
-				clients[i].write(data);
+		for(let i = 0; i< netServer.clients.length ; i++){
+			if(this.clients[i] !== owner) {
+				this.clients[i].write(data);
 			}
 		}
 		if( owner !== netServer){
@@ -222,13 +272,13 @@ function createClient(port, ip){
 	});
 	connect.on('close',function(){
 		console.log('соединение сброшено\nПопытка повторного соеденения\n\n');
+		connect.destroy();
 		setTimeout(findServer, getRandomInt(0,500) );
 	});
 	connect.on('data', beautyConsole);
 	rl.on('line', (input) => {
 		connect.write(input);
 	});
-
 	return connect;
 }
 
