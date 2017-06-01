@@ -84,12 +84,12 @@ function createDoorman(){
 		if(numb === undefined){
 			numb = getRandomInt(1,8);
 		}
-		doorman.send(numb + '::' + brdCompetitionKey +nickname , brdPort, brdMask);
+		doorman.send(numb + '::' + brdCompetitionKey +nickname , 0, 0, brdPort, brdMask);
 	}
 
 	doorman.on('message', (msg, rinfo) => {
 		if(msg == brdKey){
-			doorman.send(brdKey, rinfo.port , rinfo.address);
+			doorman.send(brdKey, 0, 0, rinfo.port , rinfo.address);
 		}
 
 		msg = msg.toString('utf8');
@@ -156,7 +156,7 @@ function findServer(){
 		var index = 0;
 		var requestNum = getRandomInt(3,7);
 
-		finder.send(brdKey, brdPort, brdMask);	
+		finder.send(brdKey, 0, 0, brdPort, brdMask);	
 		sendTimerId = setInterval(function(){
 			//если сервер не появляется после 3-7 запросов
 			//создать сервер
@@ -167,7 +167,7 @@ function findServer(){
 				application = createServer();
 				return;
 			}
-			finder.send(brdKey, brdPort, brdMask);
+			finder.send(brdKey, 0, 0, brdPort, brdMask);
 			index ++;
 		}, brdIntervalTime + getRandomInt(0,100));
 	});
@@ -243,7 +243,7 @@ function createServer(){
 	netServer.sendAll = function(msg, owner){
 		var data = owner === 'SERVER' ? 'SERVER' : (owner.nickname + " (" + owner['ip']+")" );
 		data+= strDiviner + msg;
-		for(let i = 0; i< netServer.clients.length ; i++){
+		for(var i = 0; i< netServer.clients.length ; i++){
 			if(this.clients[i] !== owner) {
 				this.clients[i].write(data);
 			}
